@@ -1,4 +1,4 @@
-package ru.deelter.vr.viveCraftFeatures;
+package ru.deelter.vr.viveCraftFeatures.utils;
 
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;

@@ -1,121 +1,84 @@
 package ru.deelter.vr.viveCraftFeatures.listeners;
 
-import io.papermc.paper.entity.TeleportFlag;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.entity.Entity;
+import org.bukkit.Material;
+import org.bukkit.block.Block;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Vehicle;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerInteractEntityEvent;
-import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.vivecraft.ViveMain;
+import org.vivecraft.VivePlayer;
 import org.vivecraft.api.VRAPI;
 import org.vivecraft.api.data.VRBodyPart;
 import org.vivecraft.api.data.VRBodyPartData;
 import org.vivecraft.api.data.VRPose;
 import ru.deelter.vr.viveCraftFeatures.ViveCraftFeatures;
-import ru.deelter.vr.viveCraftFeatures.ViveItems;
+import ru.deelter.vr.viveCraftFeatures.data.HapticPulseData;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.List;
 
 
-public class EntityGrabbingFeature implements Listener {
+public class FireBodyFeature implements Listener {
 
-	private static final TeleportFlag[] TELEPORT_FLAGS = new TeleportFlag[]{
-			TeleportFlag.Relative.VELOCITY_ROTATION,
-			TeleportFlag.Relative.VELOCITY_X, TeleportFlag.Relative.VELOCITY_Y,
-			TeleportFlag.Relative.VELOCITY_Z
-	};
-	private final Map<UUID, Entity> grabbed = new HashMap<>();
+	private static final List<Material> FIRE_BLOCKS = List.of(Material.LAVA, Material.FIRE);
 	private final @NotNull ViveCraftFeatures plugin;
+	private final HapticPulseData hapticPulseData;
 
-
-	public EntityGrabbingFeature(@NotNull ViveCraftFeatures plugin) {
+	public FireBodyFeature(@NotNull ViveCraftFeatures plugin) {
 		this.plugin = plugin;
-		if (plugin.getConfig().getBoolean("features.grabbing")) {
+		FileConfiguration config = plugin.getConfig();
+		hapticPulseData = new HapticPulseData(config.getConfigurationSection("features.fire.haptic"));
+
+		if (config.getBoolean("features.fire.enabled")) {
 			plugin.getServer().getPluginManager().registerEvents(this, plugin);
-			runGrabTask();
+			runTaskTimer();
 		}
 	}
 
-	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-	public void onGrabEntity(@NotNull PlayerInteractEntityEvent event) {
-		if (event.getHand() != EquipmentSlot.HAND) return;
-
-		Player player = event.getPlayer();
-		if (!ViveItems.isClimbingClaws(player.getInventory().getItemInMainHand())) return;
-
-		VRPose pose = VRAPI.instance().getVRPose(player);
-		if (pose == null) return;
-
-		Entity entity = event.getRightClicked();
-
-		if (entity instanceof Vehicle) return;
-		if (grabbed.containsValue(entity)) return;
-		if (!player.canSee(entity)) return;
-
-		UUID playerId = player.getUniqueId();
-
-		if (grabbed.remove(playerId) == null) {
-			grabbed.put(playerId, entity);
-		}
-	}
-
-	private void runGrabTask() {
+	private void runTaskTimer() {
 		Bukkit.getScheduler().runTaskTimer(plugin, () -> {
-			if (grabbed.isEmpty()) return;
+			if (ViveMain.VIVE_PLAYERS.isEmpty()) return;
 
-			grabbed.entrySet().removeIf(entry -> {
+			ViveMain.VIVE_PLAYERS.values().forEach(vivePlayer -> {
 
-				Player player = Bukkit.getPlayer(entry.getKey());
+				VRBodyPart bodyPart = getBodyPartInFire(vivePlayer);
+				if (bodyPart == null) return;
 
-				if (player == null || !player.isOnline() || player.isDead()) {
-					return true;
-				}
-				VRPose pose = VRAPI.instance().getVRPose(player);
-				if (pose == null) return true;
+				Player player = vivePlayer.player;
+				player.setFireTicks(100);
 
-				VRBodyPartData controller = pose.getBodyPartData(VRBodyPart.MAIN_HAND);
-				if (controller == null) return true;
-
-				Location controllerLocation = controller.getPos().toLocation(player.getWorld());
-				AttributeInstance attribute = player.getAttribute(Attribute.SCALE);
-
-				int distance = 3;
-				double grabRadius = 0.2;
-
-				if (attribute != null && attribute.getValue() > 5) {
-					grabRadius = 1.0;
-					distance = 6;
-				}
-
-				Entity entity = entry.getValue();
-				boolean inTarget = entity.equals(player.getTargetEntity(distance));
-				boolean inSquare = controllerLocation.getNearbyEntities(grabRadius, grabRadius, grabRadius)
-						.stream()
-						.anyMatch(entity1 -> entity1.equals(entity));
-
-				if (inTarget || inSquare) {
-					entity.teleport(controllerLocation, TELEPORT_FLAGS);
-					return false;
-				}
-
-				Vector controllerDirection = controller.getPos();
-				Vector throwDirection = controllerDirection.clone().normalize().multiply(1.3);
-				entity.setVelocity(throwDirection);
-
-				VRAPI.instance().sendHapticPulse(player, VRBodyPart.MAIN_HAND, 0.3f);
-				return true;
+				VRAPI.instance().sendHapticPulse(
+						player,
+						bodyPart,
+						hapticPulseData.getDuration(),
+						hapticPulseData.getFrequency(),
+						hapticPulseData.getAmplitude(),
+						hapticPulseData.getDelay());
 			});
+		}, 0, 5);
+	}
 
-		}, 0, 1);
+	private @Nullable VRBodyPart getBodyPartInFire(@NotNull VivePlayer vivePlayer) {
+		VRPose pose = vivePlayer.asVRPose();
+		if (pose == null) return null;
+
+		for (VRBodyPart bodyPart : VRBodyPart.values()) {
+			VRBodyPartData bodyPartData = pose.getBodyPartData(bodyPart);
+			if (bodyPartData == null) continue;
+
+			Player player = vivePlayer.player;
+			if (player.isDead() || !player.isOnline()) {
+				return null;
+			}
+			Block block = bodyPartData.getPos()
+					.toLocation(player.getWorld())
+					.getBlock();
+			if (FIRE_BLOCKS.contains(block.getType())) {
+				return bodyPart;
+			}
+		}
+		return null;
 	}
 }

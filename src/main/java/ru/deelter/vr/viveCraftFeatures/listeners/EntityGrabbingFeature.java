@@ -1,10 +1,11 @@
-package ru.deelter.vivecraft.listeners;
+package ru.deelter.vr.viveCraftFeatures.listeners;
 
 import io.papermc.paper.entity.TeleportFlag;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Vehicle;
@@ -15,30 +16,39 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
-import ru.deelter.vivecraft.ViveCraftPaper;
-import ru.deelter.vivecraft.data.BodyData;
-import ru.deelter.vivecraft.data.VivePlayer;
-import ru.deelter.vivecraft.items.ViveItems;
+import org.vivecraft.api.VRAPI;
+import org.vivecraft.api.data.VRBodyPart;
+import org.vivecraft.api.data.VRBodyPartData;
+import org.vivecraft.api.data.VRPose;
+import ru.deelter.vr.viveCraftFeatures.ViveCraftFeatures;
+import ru.deelter.vr.viveCraftFeatures.utils.ViveItems;
+import ru.deelter.vr.viveCraftFeatures.data.HapticPulseData;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 
-public class FeatureGrabbingMechanic implements Listener {
+public class EntityGrabbingFeature implements Listener {
 
 	private static final TeleportFlag[] TELEPORT_FLAGS = new TeleportFlag[]{
 			TeleportFlag.Relative.VELOCITY_ROTATION,
 			TeleportFlag.Relative.VELOCITY_X, TeleportFlag.Relative.VELOCITY_Y,
 			TeleportFlag.Relative.VELOCITY_Z
 	};
-	private final ViveCraftPaper plugin;
-	private final Map<VivePlayer, Entity> grabbed = new HashMap<>();
+	private final Map<UUID, Entity> grabbed = new HashMap<>();
+	private final @NotNull ViveCraftFeatures plugin;
+	private final HapticPulseData hapticPulseData;
 
 
-	public FeatureGrabbingMechanic(@NotNull ViveCraftPaper plugin) {
+	public EntityGrabbingFeature(@NotNull ViveCraftFeatures plugin) {
 		this.plugin = plugin;
 
-		if (plugin.getViveConfig().isFeaturesGrabbingEnabled()) {
+		FileConfiguration config = plugin.getConfig();
+		hapticPulseData = new HapticPulseData(config.getConfigurationSection("features.grabbing.haptic"));
+		hapticPulseData.setBodyPart(VRBodyPart.MAIN_HAND);
+
+		if (config.getBoolean("features.grabbing.enabled")) {
 			plugin.getServer().getPluginManager().registerEvents(this, plugin);
 			runGrabTask();
 		}
@@ -51,8 +61,8 @@ public class FeatureGrabbingMechanic implements Listener {
 		Player player = event.getPlayer();
 		if (!ViveItems.isClimbingClaws(player.getInventory().getItemInMainHand())) return;
 
-		VivePlayer vivePlayer = VivePlayer.of(player);
-		if (vivePlayer == null || !vivePlayer.isInHeadset()) return;
+		VRPose pose = VRAPI.instance().getVRPose(player);
+		if (pose == null) return;
 
 		Entity entity = event.getRightClicked();
 
@@ -60,8 +70,11 @@ public class FeatureGrabbingMechanic implements Listener {
 		if (grabbed.containsValue(entity)) return;
 		if (!player.canSee(entity)) return;
 
-		if (grabbed.remove(vivePlayer) == null) {
-			grabbed.put(vivePlayer, entity);
+		UUID playerId = player.getUniqueId();
+
+		if (grabbed.remove(playerId) == null) {
+			grabbed.put(playerId, entity);
+			event.setCancelled(true);
 		}
 	}
 
@@ -70,14 +83,19 @@ public class FeatureGrabbingMechanic implements Listener {
 			if (grabbed.isEmpty()) return;
 
 			grabbed.entrySet().removeIf(entry -> {
-				VivePlayer vivePlayer = entry.getKey();
-				Player player = vivePlayer.getPlayer();
-				Entity entity = entry.getValue();
 
-				BodyData controller = vivePlayer.getMainController();
+				Player player = Bukkit.getPlayer(entry.getKey());
+
+				if (player == null || !player.isOnline() || player.isDead()) {
+					return true;
+				}
+				VRPose pose = VRAPI.instance().getVRPose(player);
+				if (pose == null) return true;
+
+				VRBodyPartData controller = pose.getBodyPartData(VRBodyPart.MAIN_HAND);
 				if (controller == null) return true;
 
-				Location controllerLocation = controller.getPosition();
+				Location controllerLocation = controller.getPos().toLocation(player.getWorld());
 				AttributeInstance attribute = player.getAttribute(Attribute.SCALE);
 
 				int distance = 3;
@@ -88,6 +106,7 @@ public class FeatureGrabbingMechanic implements Listener {
 					distance = 6;
 				}
 
+				Entity entity = entry.getValue();
 				boolean inTarget = entity.equals(player.getTargetEntity(distance));
 				boolean inSquare = controllerLocation.getNearbyEntities(grabRadius, grabRadius, grabRadius)
 						.stream()
@@ -95,13 +114,14 @@ public class FeatureGrabbingMechanic implements Listener {
 
 				if (inTarget || inSquare) {
 					entity.teleport(controllerLocation, TELEPORT_FLAGS);
-//					entity.setVelocity(controllerLocation.toVector());
 					return false;
 				}
 
-				Vector controllerDirection = controller.getDirection();
+				Vector controllerDirection = controller.getPos();
 				Vector throwDirection = controllerDirection.clone().normalize().multiply(1.3);
 				entity.setVelocity(throwDirection);
+
+				hapticPulseData.send(player);
 				return true;
 			});
 

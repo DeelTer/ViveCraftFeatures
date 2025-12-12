@@ -1,0 +1,18 @@
+features:
+  grabbing:
+    enabled: true
+    haptic:
+      duration: 0.3
+      frequency: 80.0
+      amplitude: 1.0
+      delay: 0.0
+  fire:
+    enabled: true
+    haptic:
+      duration: 1.0
+      frequency: 160.0
+      amplitude: 1.0
+      delay: 0.0
+    blocks:
+      - LAVA
+      - FIRE
