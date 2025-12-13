@@ -1,6 +1,8 @@
 package ru.deelter.vr.viveCraftFeatures;
 
+import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
+import ru.deelter.vr.viveCraftFeatures.commands.ScaleCommand;
 import ru.deelter.vr.viveCraftFeatures.listeners.EntityGrabbingFeature;
 import ru.deelter.vr.viveCraftFeatures.listeners.FireBodyFeature;
 
@@ -12,6 +14,8 @@ public final class ViveCraftFeatures extends JavaPlugin {
 
 		new EntityGrabbingFeature(this);
 		new FireBodyFeature(this);
+
+		new ScaleCommand(this);
 	}
 
 	@Override
