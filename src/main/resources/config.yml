@@ -16,3 +16,5 @@ features:
     blocks:
       - LAVA
       - FIRE
+      - MAGMA_BLOCK
+      - LAVA_CAULDRON
